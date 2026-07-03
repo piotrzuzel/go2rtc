@@ -92,6 +92,10 @@ func (p *Producer) GetTrack(media *core.Media, codec *core.Codec) (*core.Receive
 
 	for _, track := range p.receivers {
 		if track.Codec == codec {
+			// new consumer for already running track shouldn't wait for keyframe
+			if req, ok := p.conn.(interface{ RequestKeyframe() }); ok && codec.IsVideo() {
+				req.RequestKeyframe()
+			}
 			return track, nil
 		}
 	}

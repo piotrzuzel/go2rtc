@@ -177,6 +177,14 @@ func (c *Client) Stop() error {
 	return c.Connection.Stop()
 }
 
+// RequestKeyframe - new consumers should wait less for the first frame,
+// some cameras may ignore this request (ex. Tapo C225)
+func (c *Client) RequestKeyframe() {
+	if c.videoSession != nil && c.videoSession.Remote != nil {
+		c.videoSession.RequestKeyframe()
+	}
+}
+
 func (c *Client) trackByKind(kind string) *core.Receiver {
 	for _, receiver := range c.Receivers {
 		if receiver.Codec.Kind() == kind {
