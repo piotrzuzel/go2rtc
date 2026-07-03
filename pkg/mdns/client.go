@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -244,8 +245,21 @@ func (b *Browser) Browse(onentry func(*ServiceEntry) bool) error {
 		return err
 	}
 
-	if err = b.Recv.SetDeadline(time.Now().Add(b.RecvTimeout)); err != nil {
-		return err
+	// some devices (ex. Tapo C225) send unicast responses,
+	// kernel delivers them to the interface-bound senders sockets
+	// instead of the wildcard receiver, so read from every socket
+	conns := []net.PacketConn{b.Recv}
+	for _, send := range b.Sends {
+		if send != b.Recv {
+			conns = append(conns, send)
+		}
+	}
+
+	deadline := time.Now().Add(b.RecvTimeout)
+	for _, conn := range conns {
+		if err = conn.SetReadDeadline(deadline); err != nil {
+			return err
+		}
 	}
 
 	go func() {
@@ -259,17 +273,47 @@ func (b *Browser) Browse(onentry func(*ServiceEntry) bool) error {
 		}
 	}()
 
+	type packet struct {
+		data []byte
+		addr net.Addr
+	}
+
+	packets := make(chan packet)
+	done := make(chan struct{})
+	defer close(done)
+
+	var wg sync.WaitGroup
+	wg.Add(len(conns))
+	for _, conn := range conns {
+		go func(conn net.PacketConn) {
+			defer wg.Done()
+			buf := make([]byte, 1500)
+			for {
+				n, addr, err := conn.ReadFrom(buf)
+				if err != nil {
+					return
+				}
+				data := make([]byte, n)
+				copy(data, buf[:n])
+				select {
+				case packets <- packet{data, addr}:
+				case <-done:
+					return
+				}
+			}
+		}(conn)
+	}
+
+	go func() {
+		wg.Wait()
+		close(packets)
+	}()
+
 	processed := map[string]struct{}{"": {}}
 
-	b2 := make([]byte, 1500)
-	for {
+	for pkt := range packets {
 		// in the Hass docker network can receive same msg from different address
-		n, addr, err := b.Recv.ReadFrom(b2)
-		if err != nil {
-			break
-		}
-
-		if err = msg.Unpack(b2[:n]); err != nil {
+		if err = msg.Unpack(pkt.data); err != nil {
 			continue
 		}
 
@@ -279,7 +323,7 @@ func (b *Browser) Browse(onentry func(*ServiceEntry) bool) error {
 			continue
 		}
 
-		ip := addr.(*net.UDPAddr).IP
+		ip := pkt.addr.(*net.UDPAddr).IP
 
 		for _, entry := range NewServiceEntries(msg, ip) {
 			if onentry(entry) {
