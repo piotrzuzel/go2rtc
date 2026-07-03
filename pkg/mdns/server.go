@@ -21,9 +21,11 @@ func Serve(service string, entries []*ServiceEntry) error {
 
 func (b *Browser) Serve(entries []*ServiceEntry) error {
 	names := make(map[string]*ServiceEntry, len(entries))
+	hosts := make(map[string]*ServiceEntry, len(entries))
 	for _, entry := range entries {
 		name := entry.name() + "." + b.Service
 		names[name] = entry
+		hosts[entry.name()+".local."] = entry
 	}
 
 	done := make(chan struct{})
@@ -56,21 +58,51 @@ func (b *Browser) Serve(entries []*ServiceEntry) error {
 		for _, q := range req.Question {
 			// support QU questions (unicast response bit in Qclass)
 			// https://datatracker.ietf.org/doc/html/rfc6762#section-5.4
-			if q.Qtype != dns.TypePTR || q.Qclass&0x7FFF != dns.ClassINET {
+			if q.Qclass&0x7FFF != dns.ClassINET {
+				continue
+			}
+
+			switch q.Qtype {
+			case dns.TypePTR:
+				if q.Name == ServiceDNSSD {
+					AppendDNSSD(&res, b.Service)
+				} else if q.Name == b.Service {
+					for _, entry := range entries {
+						AppendEntry(&res, entry, b.Service, localIP)
+					}
+				} else if entry, ok := names[q.Name]; ok {
+					AppendEntry(&res, entry, b.Service, localIP)
+				} else {
+					continue
+				}
+
+			case dns.TypeTXT:
+				entry, ok := names[q.Name]
+				if !ok {
+					continue
+				}
+				res.Answer = append(res.Answer, newTXT(entry, q.Name))
+
+			case dns.TypeSRV:
+				entry, ok := names[q.Name]
+				if !ok {
+					continue
+				}
+				res.Answer = append(res.Answer, newSRV(entry, q.Name))
+				res.Extra = append(res.Extra, newA(entry, localIP))
+
+			case dns.TypeA, dns.TypeANY:
+				entry, ok := hosts[q.Name]
+				if !ok {
+					continue
+				}
+				res.Answer = append(res.Answer, newA(entry, localIP))
+
+			default:
 				continue
 			}
 
 			unicast = unicast || q.Qclass&0x8000 != 0
-
-			if q.Name == ServiceDNSSD {
-				AppendDNSSD(&res, b.Service)
-			} else if q.Name == b.Service {
-				for _, entry := range entries {
-					AppendEntry(&res, entry, b.Service, localIP)
-				}
-			} else if entry, ok := names[q.Name]; ok {
-				AppendEntry(&res, entry, b.Service, localIP)
-			}
 		}
 
 		if res.Answer == nil {
@@ -128,7 +160,6 @@ func AppendDNSSD(msg *dns.Msg, service string) {
 
 func AppendEntry(msg *dns.Msg, entry *ServiceEntry, service string, ip net.IP) {
 	ptrName := entry.name() + "." + service
-	srvName := entry.name() + ".local."
 
 	msg.Answer = append(
 		msg.Answer,
@@ -144,33 +175,45 @@ func AppendEntry(msg *dns.Msg, entry *ServiceEntry, service string, ip net.IP) {
 	)
 	msg.Extra = append(
 		msg.Extra,
-		&dns.TXT{
-			Hdr: dns.RR_Header{
-				Name:   ptrName,         // Home\ Assistant._home-assistant._tcp.local.
-				Rrtype: dns.TypeTXT,     // 16
-				Class:  ClassCacheFlush, // 32769
-				Ttl:    4500,
-			},
-			Txt: entry.TXT(),
-		},
-		&dns.SRV{
-			Hdr: dns.RR_Header{
-				Name:   ptrName,         // Home\ Assistant._home-assistant._tcp.local.
-				Rrtype: dns.TypeSRV,     // 33
-				Class:  ClassCacheFlush, // 32769
-				Ttl:    120,
-			},
-			Port:   entry.Port, // 8123
-			Target: srvName,    // 963f1fa82b7142809711cebe7c826322.local.
-		},
-		&dns.A{
-			Hdr: dns.RR_Header{
-				Name:   srvName,         // 963f1fa82b7142809711cebe7c826322.local.
-				Rrtype: dns.TypeA,       // 1
-				Class:  ClassCacheFlush, // 32769
-				Ttl:    120,
-			},
-			A: ip,
-		},
+		newTXT(entry, ptrName),
+		newSRV(entry, ptrName),
+		newA(entry, ip),
 	)
+}
+
+func newTXT(entry *ServiceEntry, ptrName string) *dns.TXT {
+	return &dns.TXT{
+		Hdr: dns.RR_Header{
+			Name:   ptrName,         // Home\ Assistant._home-assistant._tcp.local.
+			Rrtype: dns.TypeTXT,     // 16
+			Class:  ClassCacheFlush, // 32769
+			Ttl:    4500,
+		},
+		Txt: entry.TXT(),
+	}
+}
+
+func newSRV(entry *ServiceEntry, ptrName string) *dns.SRV {
+	return &dns.SRV{
+		Hdr: dns.RR_Header{
+			Name:   ptrName,         // Home\ Assistant._home-assistant._tcp.local.
+			Rrtype: dns.TypeSRV,     // 33
+			Class:  ClassCacheFlush, // 32769
+			Ttl:    120,
+		},
+		Port:   entry.Port,               // 8123
+		Target: entry.name() + ".local.", // 963f1fa82b7142809711cebe7c826322.local.
+	}
+}
+
+func newA(entry *ServiceEntry, ip net.IP) *dns.A {
+	return &dns.A{
+		Hdr: dns.RR_Header{
+			Name:   entry.name() + ".local.", // 963f1fa82b7142809711cebe7c826322.local.
+			Rrtype: dns.TypeA,                // 1
+			Class:  ClassCacheFlush,          // 32769
+			Ttl:    120,
+		},
+		A: ip,
+	}
 }
