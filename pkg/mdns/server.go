@@ -26,15 +26,14 @@ func (b *Browser) Serve(entries []*ServiceEntry) error {
 		names[name] = entry
 	}
 
-	buf := make([]byte, 1500)
-	for {
-		n, addr, err := b.Recv.ReadFrom(buf)
-		if err != nil {
-			break
-		}
+	done := make(chan struct{})
+	defer close(done)
 
+	packets := b.readPackets(b.conns(), done)
+
+	for pkt := range packets {
 		var req dns.Msg // request
-		if err = req.Unpack(buf[:n]); err != nil {
+		if err := req.Unpack(pkt.data); err != nil {
 			continue
 		}
 
@@ -43,7 +42,7 @@ func (b *Browser) Serve(entries []*ServiceEntry) error {
 			continue
 		}
 
-		remoteIP := addr.(*net.UDPAddr).IP
+		remoteIP := pkt.addr.(*net.UDPAddr).IP
 		localIP := b.MatchLocalIP(remoteIP)
 
 		// skip messages from unknown networks (can be docker network)
@@ -51,11 +50,17 @@ func (b *Browser) Serve(entries []*ServiceEntry) error {
 			continue
 		}
 
+		var unicast bool
+
 		var res dns.Msg // response
 		for _, q := range req.Question {
-			if q.Qtype != dns.TypePTR || q.Qclass != dns.ClassINET {
+			// support QU questions (unicast response bit in Qclass)
+			// https://datatracker.ietf.org/doc/html/rfc6762#section-5.4
+			if q.Qtype != dns.TypePTR || q.Qclass&0x7FFF != dns.ClassINET {
 				continue
 			}
+
+			unicast = unicast || q.Qclass&0x8000 != 0
 
 			if q.Name == ServiceDNSSD {
 				AppendDNSSD(&res, b.Service)
@@ -80,8 +85,17 @@ func (b *Browser) Serve(entries []*ServiceEntry) error {
 			continue
 		}
 
-		for _, send := range b.Sends {
-			_, _ = send.WriteTo(data, MulticastAddr)
+		if unicast {
+			// reply directly to the asker
+			for _, send := range b.Sends {
+				if _, err = send.WriteTo(data, pkt.addr); err == nil {
+					break
+				}
+			}
+		} else {
+			for _, send := range b.Sends {
+				_, _ = send.WriteTo(data, MulticastAddr)
+			}
 		}
 	}
 

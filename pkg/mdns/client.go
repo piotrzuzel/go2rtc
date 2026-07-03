@@ -233,54 +233,28 @@ func (b *Browser) ListenMulticastUDP() error {
 	return err
 }
 
-func (b *Browser) Browse(onentry func(*ServiceEntry) bool) error {
-	msg := &dns.Msg{
-		Question: []dns.Question{
-			{Name: b.Service, Qtype: dns.TypePTR, Qclass: dns.ClassINET},
-		},
-	}
+type packet struct {
+	data []byte
+	addr net.Addr
+}
 
-	query, err := msg.Pack()
-	if err != nil {
-		return err
-	}
-
-	// some devices (ex. Tapo C225) send unicast responses,
-	// kernel delivers them to the interface-bound senders sockets
-	// instead of the wildcard receiver, so read from every socket
+// conns returns unique sockets (receiver may be same as first sender)
+func (b *Browser) conns() []net.PacketConn {
 	conns := []net.PacketConn{b.Recv}
 	for _, send := range b.Sends {
 		if send != b.Recv {
 			conns = append(conns, send)
 		}
 	}
+	return conns
+}
 
-	deadline := time.Now().Add(b.RecvTimeout)
-	for _, conn := range conns {
-		if err = conn.SetReadDeadline(deadline); err != nil {
-			return err
-		}
-	}
-
-	go func() {
-		for {
-			for _, send := range b.Sends {
-				if _, err := send.WriteTo(query, b.Addr); err != nil {
-					return
-				}
-			}
-			time.Sleep(b.SendTimeout)
-		}
-	}()
-
-	type packet struct {
-		data []byte
-		addr net.Addr
-	}
-
+// readPackets reads from every socket into single channel.
+// Some devices (ex. Tapo C225) send unicast messages,
+// kernel delivers them to the interface-bound senders sockets
+// instead of the wildcard receiver, so read from every socket.
+func (b *Browser) readPackets(conns []net.PacketConn, done <-chan struct{}) <-chan packet {
 	packets := make(chan packet)
-	done := make(chan struct{})
-	defer close(done)
 
 	var wg sync.WaitGroup
 	wg.Add(len(conns))
@@ -308,6 +282,46 @@ func (b *Browser) Browse(onentry func(*ServiceEntry) bool) error {
 		wg.Wait()
 		close(packets)
 	}()
+
+	return packets
+}
+
+func (b *Browser) Browse(onentry func(*ServiceEntry) bool) error {
+	msg := &dns.Msg{
+		Question: []dns.Question{
+			{Name: b.Service, Qtype: dns.TypePTR, Qclass: dns.ClassINET},
+		},
+	}
+
+	query, err := msg.Pack()
+	if err != nil {
+		return err
+	}
+
+	conns := b.conns()
+
+	deadline := time.Now().Add(b.RecvTimeout)
+	for _, conn := range conns {
+		if err = conn.SetReadDeadline(deadline); err != nil {
+			return err
+		}
+	}
+
+	go func() {
+		for {
+			for _, send := range b.Sends {
+				if _, err := send.WriteTo(query, b.Addr); err != nil {
+					return
+				}
+			}
+			time.Sleep(b.SendTimeout)
+		}
+	}()
+
+	done := make(chan struct{})
+	defer close(done)
+
+	packets := b.readPackets(conns, done)
 
 	processed := map[string]struct{}{"": {}}
 
