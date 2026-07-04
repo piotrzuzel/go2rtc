@@ -35,9 +35,14 @@ type Client struct {
 }
 
 func Dial(rawURL string, server *srtp.Server) (*Client, error) {
-	conn, err := hap.Dial(rawURL)
-	if err != nil {
-		return nil, err
+	// reuse lingering connection from previous session if alive
+	item := poolGet(rawURL)
+	if item == nil {
+		conn, err := hap.Dial(rawURL)
+		if err != nil {
+			return nil, err
+		}
+		item = &poolItem{client: conn}
 	}
 
 	client := &Client{
@@ -45,12 +50,15 @@ func Dial(rawURL string, server *srtp.Server) (*Client, error) {
 			ID:         core.NewID(),
 			FormatName: "homekit",
 			Protocol:   "udp",
-			RemoteAddr: conn.Conn.RemoteAddr().String(),
+			RemoteAddr: item.client.Conn.RemoteAddr().String(),
 			Source:     rawURL,
-			Transport:  conn,
+			Transport:  item.client,
+			Medias:     item.medias,
 		},
-		hap:  conn,
-		srtp: server,
+		hap:         item.client,
+		srtp:        server,
+		videoConfig: item.videoConfig,
+		audioConfig: item.audioConfig,
 	}
 
 	return client, nil
@@ -116,6 +124,10 @@ func (c *Client) Start() error {
 		return c.startMJPEG()
 	}
 
+	if len(c.videoConfig.Codecs) == 0 || len(c.audioConfig.Codecs) == 0 {
+		return errors.New("homekit: missing stream configuration")
+	}
+
 	videoTrack := c.trackByKind(core.KindVideo)
 	videoCodec := trackToVideo(videoTrack, &c.videoConfig.Codecs[0], c.MaxWidth, c.MaxHeight)
 
@@ -172,6 +184,25 @@ func (c *Client) Stop() error {
 	}
 	if c.audioSession != nil && c.audioSession.Remote != nil {
 		c.srtp.DelSession(c.audioSession)
+	}
+
+	// end camera RTP session but keep the pair-verified connection
+	// for near instant next stream start (camera sends keyframe on start)
+	if c.stream != nil && c.stream.Close() == nil {
+		poolPut(c.Source, &poolItem{
+			client:      c.hap,
+			medias:      c.Medias,
+			videoConfig: c.videoConfig,
+			audioConfig: c.audioConfig,
+		})
+
+		for _, receiver := range c.Receivers {
+			receiver.Close()
+		}
+		for _, sender := range c.Senders {
+			sender.Close()
+		}
+		return nil
 	}
 
 	return c.Connection.Stop()

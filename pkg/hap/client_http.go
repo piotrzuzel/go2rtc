@@ -26,7 +26,23 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 	if c.res != nil {
 		return <-c.res, c.err
 	}
-	return http.ReadResponse(c.reader, req)
+	for {
+		res, err := ReadResponse(c.reader, req)
+		if err != nil {
+			return nil, err
+		}
+		// skip events, they can accumulate on a lingering connection
+		if res.Proto == ProtoEvent {
+			if _, err = io.Copy(io.Discard, res.Body); err != nil {
+				return nil, err
+			}
+			if c.OnEvent != nil {
+				c.OnEvent(res)
+			}
+			continue
+		}
+		return res, nil
+	}
 }
 
 func (c *Client) Request(method, path, contentType string, body io.Reader) (*http.Response, error) {
