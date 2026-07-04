@@ -127,14 +127,14 @@ func (b *Browser) Serve(entries []*ServiceEntry) error {
 			continue
 		}
 
-		if unicast {
-			// reply directly to the asker
-			for _, send := range b.Sends {
-				if _, err = send.WriteTo(data, pkt.addr); err == nil {
-					break
-				}
+		// always reply unicast to the asker too - multicast delivery
+		// to Wi-Fi clients in power save is unreliable
+		for _, send := range b.Sends {
+			if _, err = send.WriteTo(data, pkt.addr); err == nil {
+				break
 			}
-		} else {
+		}
+		if !unicast {
 			for _, send := range b.Sends {
 				_, _ = send.WriteTo(data, MulticastAddr)
 			}
