@@ -97,6 +97,16 @@ func (b *Browser) Serve(entries []*ServiceEntry) error {
 					continue
 				}
 				res.Answer = append(res.Answer, newA(entry, localIP))
+				res.Extra = append(res.Extra, newNSEC(entry))
+
+			case dns.TypeAAAA:
+				entry, ok := hosts[q.Name]
+				if !ok {
+					continue
+				}
+				// negative response per RFC 6762 section 6.1 - without it
+				// Apple controllers wait out the AAAA timeout on every connect
+				res.Answer = append(res.Answer, newNSEC(entry))
 
 			default:
 				continue
@@ -178,7 +188,25 @@ func AppendEntry(msg *dns.Msg, entry *ServiceEntry, service string, ip net.IP) {
 		newTXT(entry, ptrName),
 		newSRV(entry, ptrName),
 		newA(entry, ip),
+		newNSEC(entry),
 	)
+}
+
+// newNSEC - assert that only the A record exists for the host,
+// so clients don't wait for an AAAA answer that will never come
+// https://datatracker.ietf.org/doc/html/rfc6762#section-6.1
+func newNSEC(entry *ServiceEntry) *dns.NSEC {
+	name := entry.name() + ".local."
+	return &dns.NSEC{
+		Hdr: dns.RR_Header{
+			Name:   name,
+			Rrtype: dns.TypeNSEC,
+			Class:  ClassCacheFlush,
+			Ttl:    120,
+		},
+		NextDomain: name,
+		TypeBitMap: []uint16{dns.TypeA},
+	}
 }
 
 func newTXT(entry *ServiceEntry, ptrName string) *dns.TXT {
