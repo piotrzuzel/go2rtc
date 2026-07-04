@@ -25,6 +25,7 @@ type Session struct {
 
 	senderRTCP rtcp.SenderReport
 	senderTime time.Time
+	firSeq     uint8
 }
 
 type Endpoint struct {
@@ -117,6 +118,30 @@ func (s *Session) WriteRTCP(packet rtcp.Packet) (int, error) {
 		return 0, err
 	}
 	return s.conn.WriteTo(b, s.Remote.addr)
+}
+
+// RequestKeyframe - ask remote to send new keyframe,
+// send both PLI and FIR because devices may support only one of them
+func (s *Session) RequestKeyframe() {
+	if s.Local == nil || s.Local.srtp == nil || s.conn == nil {
+		return
+	}
+
+	pli := rtcp.PictureLossIndication{
+		SenderSSRC: s.Local.SSRC,
+		MediaSSRC:  s.Remote.SSRC,
+	}
+	_, _ = s.WriteRTCP(&pli)
+
+	s.firSeq++
+	fir := rtcp.FullIntraRequest{
+		SenderSSRC: s.Local.SSRC,
+		MediaSSRC:  s.Remote.SSRC,
+		FIR: []rtcp.FIREntry{
+			{SSRC: s.Remote.SSRC, SequenceNumber: s.firSeq},
+		},
+	}
+	_, _ = s.WriteRTCP(&fir)
 }
 
 func (s *Session) ReadRTP(b []byte) {
