@@ -202,7 +202,7 @@ func newNSEC(entry *ServiceEntry) *dns.NSEC {
 			Name:   name,
 			Rrtype: dns.TypeNSEC,
 			Class:  ClassCacheFlush,
-			Ttl:    120,
+			Ttl:    4500,
 		},
 		NextDomain: name,
 		TypeBitMap: []uint16{dns.TypeA},
@@ -227,7 +227,7 @@ func newSRV(entry *ServiceEntry, ptrName string) *dns.SRV {
 			Name:   ptrName,         // Home\ Assistant._home-assistant._tcp.local.
 			Rrtype: dns.TypeSRV,     // 33
 			Class:  ClassCacheFlush, // 32769
-			Ttl:    120,
+			Ttl:    4500,
 		},
 		Port:   entry.Port,               // 8123
 		Target: entry.name() + ".local.", // 963f1fa82b7142809711cebe7c826322.local.
@@ -240,7 +240,7 @@ func newA(entry *ServiceEntry, ip net.IP) *dns.A {
 			Name:   entry.name() + ".local.", // 963f1fa82b7142809711cebe7c826322.local.
 			Rrtype: dns.TypeA,                // 1
 			Class:  ClassCacheFlush,          // 32769
-			Ttl:    120,
+			Ttl:    4500,
 		},
 		A: ip,
 	}
