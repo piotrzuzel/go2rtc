@@ -13,9 +13,8 @@ func NewAccessory(manuf, model, name, serial, firmware string) *hap.Accessory {
 			ServiceCameraRTPStreamManagement(),
 			hap.ServiceHAPProtocolInformation(),
 			ServiceMicrophone(),
-			ServiceSpeaker(),
 			ServiceCameraOperatingMode(),
-			ServiceMotionSensor(),
+			ServiceMotionSensor(name),
 		},
 	}
 	acc.InitIID()
@@ -25,10 +24,17 @@ func NewAccessory(manuf, model, name, serial, firmware string) *hap.Accessory {
 // ServiceMotionSensor - Apple controllers keep a persistent connection
 // to accessories with subscribable sensors, which makes every stream
 // start much faster (no reconnect + pair-verify on each interaction)
-func ServiceMotionSensor() *hap.Service {
+func ServiceMotionSensor(name string) *hap.Service {
 	return &hap.Service{
 		Type: "85", // 'MotionSensor'
 		Characters: []*hap.Character{
+			{
+				Type:   "23",
+				Format: hap.FormatString,
+				Value:  name + " Motion",
+				Perms:  hap.PR,
+				//Descr:  "Name"
+			},
 			{
 				Type:   "22",
 				Format: hap.FormatBool,
@@ -78,20 +84,6 @@ func ServiceCameraOperatingMode() *hap.Service {
 	}
 }
 
-func ServiceSpeaker() *hap.Service {
-	return &hap.Service{
-		Type: "113", // 'Speaker'
-		Characters: []*hap.Character{
-			{
-				Type:   "11A",
-				Format: hap.FormatBool,
-				Value:  false,
-				Perms:  hap.EVPRPW,
-				//Descr:  "Mute"
-			},
-		},
-	}
-}
 
 func ServiceMicrophone() *hap.Service {
 	return &hap.Service{

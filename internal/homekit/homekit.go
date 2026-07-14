@@ -85,8 +85,8 @@ func Init() {
 			Port: uint16(api.Port),
 			Info: map[string]string{
 				// bump when the accessory database changes, so paired
-				// controllers re-read it (2: events + motion/mode services)
-				hap.TXTConfigNumber: "2",
+				// controllers re-read it (3: events + motion/mode services)
+				hap.TXTConfigNumber: "3",
 				hap.TXTFeatureFlags: "0",
 				hap.TXTDeviceID:     deviceID,
 				hap.TXTModel:        app.UserAgent,
