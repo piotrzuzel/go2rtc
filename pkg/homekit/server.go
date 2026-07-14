@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/AlexxIT/go2rtc/pkg/hap"
 	"github.com/AlexxIT/go2rtc/pkg/hap/tlv8"
@@ -36,7 +37,10 @@ type ServerAccessory interface {
 }
 
 func ServerHandler(server Server) HandlerFunc {
-	return handleRequest(func(conn net.Conn, req *http.Request) (*http.Response, error) {
+	cleanup := func(events *eventWriter) {
+		unsubscribeAll(server, nil, events)
+	}
+	return handleRequest(func(conn net.Conn, req *http.Request, events *eventWriter) (*http.Response, error) {
 		switch req.URL.Path {
 		case hap.PathPairings:
 			return handlePairings(req, server)
@@ -68,6 +72,7 @@ func ServerHandler(server Server) HandlerFunc {
 						AID   uint8  `json:"aid"`
 						IID   uint64 `json:"iid"`
 						Value any    `json:"value"`
+						Event *bool  `json:"ev"`
 					} `json:"characteristics"`
 				}
 				if err := json.NewDecoder(req.Body).Decode(&v); err != nil {
@@ -75,7 +80,13 @@ func ServerHandler(server Server) HandlerFunc {
 				}
 
 				for _, char := range v.Value {
-					server.SetCharacteristic(conn, char.AID, char.IID, char.Value)
+					// event subscription (ev) and value write may come separately
+					if char.Event != nil {
+						subscribe(server, conn, char.AID, char.IID, *char.Event, events)
+					}
+					if char.Value != nil {
+						server.SetCharacteristic(conn, char.AID, char.IID, char.Value)
+					}
 				}
 
 				res := &http.Response{
@@ -102,13 +113,60 @@ func ServerHandler(server Server) HandlerFunc {
 		}
 
 		return nil, errors.New("hap: unsupported path: " + req.RequestURI)
-	})
+	}, cleanup)
 }
 
-func handleRequest(handle func(conn net.Conn, req *http.Request) (*http.Response, error)) HandlerFunc {
+// eventWriter delivers EVENT/1.0 frames to a connection, serialized
+// with regular HTTP responses so frames never interleave
+type eventWriter struct {
+	conn net.Conn
+	mu   sync.Mutex
+}
+
+func (e *eventWriter) Write(p []byte) (int, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.conn.Write(p)
+}
+
+// subscribe adds or removes the connection as characteristic event listener
+func subscribe(server Server, conn net.Conn, aid uint8, iid uint64, enable bool, events *eventWriter) {
+	for _, acc := range server.GetAccessories(conn) {
+		if acc.AID != aid {
+			continue
+		}
+		if char := acc.GetCharacterByID(iid); char != nil {
+			if enable {
+				char.AddListener(events)
+			} else {
+				char.RemoveListener(events)
+			}
+		}
+	}
+}
+
+// unsubscribeAll removes the connection from every characteristic
+// (connection closed)
+func unsubscribeAll(server Server, conn net.Conn, events *eventWriter) {
+	for _, acc := range server.GetAccessories(conn) {
+		for _, srv := range acc.Services {
+			for _, char := range srv.Characters {
+				char.RemoveListener(events)
+			}
+		}
+	}
+}
+
+func handleRequest(handle func(conn net.Conn, req *http.Request, events *eventWriter) (*http.Response, error), cleanup func(events *eventWriter)) HandlerFunc {
 	return func(conn net.Conn) error {
 		rw := bufio.NewReaderSize(conn, 16*1024)
 		wr := bufio.NewWriterSize(conn, 16*1024)
+
+		events := &eventWriter{conn: conn}
+		if cleanup != nil {
+			defer cleanup(events)
+		}
+
 		for {
 			req, err := http.ReadRequest(rw)
 			//debug(req)
@@ -116,16 +174,19 @@ func handleRequest(handle func(conn net.Conn, req *http.Request) (*http.Response
 				return err
 			}
 
-			res, err := handle(conn, req)
+			res, err := handle(conn, req, events)
 			//debug(res)
 			if err != nil {
 				return err
 			}
 
-			if err = res.Write(wr); err != nil {
-				return err
+			events.mu.Lock()
+			if err = res.Write(wr); err == nil {
+				err = wr.Flush()
 			}
-			if err = wr.Flush(); err != nil {
+			events.mu.Unlock()
+
+			if err != nil {
 				return err
 			}
 		}

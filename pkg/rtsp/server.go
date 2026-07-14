@@ -205,6 +205,16 @@ func (c *Conn) Accept() error {
 			res := &tcp.Response{Request: req}
 			err = c.WriteResponse(res)
 			c.playOK = true
+
+			if c.mode == core.ModePassiveConsumer {
+				// start configured senders - they may hold replayed
+				// GOP cache packets since AddTrack
+				for _, track := range c.Senders {
+					if track.Media.ID == MethodSetup {
+						track.Start()
+					}
+				}
+			}
 			return err
 
 		case MethodTeardown:
