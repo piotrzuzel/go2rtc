@@ -104,6 +104,12 @@ func (c *Client) Dial() (err error) {
 		return
 	}
 
+	// detect half-dead connections (important for lingering connections)
+	if tcp, ok := c.Conn.(*net.TCPConn); ok {
+		_ = tcp.SetKeepAlive(true)
+		_ = tcp.SetKeepAlivePeriod(30 * time.Second)
+	}
+
 	c.reader = bufio.NewReader(c.Conn)
 
 	// STEP M1: send our session public to device

@@ -43,9 +43,17 @@ func Init() {
 			}
 		}
 		for name, rawQuery := range cfg.Preload {
-			if err := AddPreload(name, rawQuery); err != nil {
-				log.Error().Err(err).Caller().Send()
-			}
+			go func(name, rawQuery string) {
+				// source may be offline on boot - keep trying
+				for {
+					err := AddPreload(name, rawQuery)
+					if err == nil {
+						return
+					}
+					log.Error().Err(err).Caller().Send()
+					time.Sleep(time.Second * 30)
+				}
+			}(name, rawQuery)
 		}
 	})
 }

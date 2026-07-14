@@ -158,10 +158,24 @@ func (p *Producer) start() {
 	p.state = stateStart
 	p.workerID++
 
-	go p.worker(p.conn, p.workerID)
+	go p.worker(p.conn, p.workerID, 0)
 }
 
-func (p *Producer) worker(conn core.Producer, workerID int) {
+func retryTimeout(retry int) time.Duration {
+	switch {
+	case retry < 5:
+		return time.Second
+	case retry < 10:
+		return time.Second * 5
+	case retry < 20:
+		return time.Second * 10
+	}
+	return time.Minute
+}
+
+func (p *Producer) worker(conn core.Producer, workerID, retry int) {
+	startTime := time.Now()
+
 	if err := conn.Start(); err != nil {
 		p.mu.Lock()
 		closed := p.workerID != workerID
@@ -174,7 +188,21 @@ func (p *Producer) worker(conn core.Producer, workerID int) {
 		log.Warn().Err(err).Str("url", p.url).Caller().Send()
 	}
 
-	p.reconnect(workerID, 0)
+	// producer that fails quickly should backoff before reconnect,
+	// so it doesn't flood the source device (some cameras can wedge)
+	if time.Since(startTime) > time.Minute {
+		retry = 0
+	} else {
+		retry++
+	}
+
+	if retry > 0 {
+		time.AfterFunc(retryTimeout(retry), func() {
+			p.reconnect(workerID, retry)
+		})
+	} else {
+		p.reconnect(workerID, retry)
+	}
 }
 
 func (p *Producer) reconnect(workerID, retry int) {
@@ -192,16 +220,7 @@ func (p *Producer) reconnect(workerID, retry int) {
 	if err != nil {
 		log.Debug().Msgf("[streams] producer=%s", err)
 
-		timeout := time.Minute
-		if retry < 5 {
-			timeout = time.Second
-		} else if retry < 10 {
-			timeout = time.Second * 5
-		} else if retry < 20 {
-			timeout = time.Second * 10
-		}
-
-		time.AfterFunc(timeout, func() {
+		time.AfterFunc(retryTimeout(retry), func() {
 			p.reconnect(workerID, retry+1)
 		})
 		return
@@ -243,7 +262,7 @@ func (p *Producer) reconnect(workerID, retry int) {
 	// swap connections
 	p.conn = conn
 
-	go p.worker(conn, workerID)
+	go p.worker(conn, workerID, retry)
 }
 
 func (p *Producer) stop() {
