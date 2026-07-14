@@ -59,7 +59,13 @@ func (c *Conn) AddTrack(media *core.Media, codec *core.Codec, track *core.Receiv
 		sender.Handler = pcm.RepackG711(true, sender.Handler)
 	}
 
-	sender.HandleRTP(track)
+	if c.mode == core.ModePassiveConsumer {
+		// don't start sender until PLAY - the connection drops packets in
+		// StateNone, which would throw away the replayed GOP cache
+		sender.Bind(track)
+	} else {
+		sender.HandleRTP(track)
+	}
 
 	c.Senders = append(c.Senders, sender)
 	return nil

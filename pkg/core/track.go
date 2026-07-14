@@ -192,8 +192,10 @@ func (s *Sender) HandleRTP(parent *Receiver) {
 }
 
 // Deprecated: should be removed
+// Bind attaches sender without starting it - replayed GOP cache packets
+// wait in the sender buffer until Start
 func (s *Sender) Bind(parent *Receiver) {
-	s.WithParent(parent)
+	parent.bindSender(s)
 }
 
 func (s *Sender) WithParent(parent *Receiver) *Sender {
