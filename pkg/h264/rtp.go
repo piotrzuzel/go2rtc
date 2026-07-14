@@ -13,6 +13,33 @@ const RTPPacketVersionAVC = 0
 
 const PSMaxSize = 128 // the biggest SPS I've seen is 48 (EZVIZ CS-CV210)
 
+func init() {
+	core.KeyframeRTP[core.CodecH264] = IsKeyframeRTP
+}
+
+// IsKeyframeRTP - check if RTP payload (RFC 6184) is part of a new key unit
+// (SPS/PPS/IDR). Used for the GOP cache in core.Receiver.
+func IsKeyframeRTP(payload []byte) bool {
+	if len(payload) < 2 {
+		return false
+	}
+	switch payload[0] & 0x1F {
+	case NALUTypeIFrame, NALUTypeSPS, NALUTypePPS:
+		return true
+	case 24: // STAP-A - scan aggregated units
+		for i := 1; i+2 < len(payload); {
+			switch payload[i+2] & 0x1F {
+			case NALUTypeIFrame, NALUTypeSPS, NALUTypePPS:
+				return true
+			}
+			i += 2 + int(binary.BigEndian.Uint16(payload[i:]))
+		}
+	case 28: // FU-A - only the start fragment begins a key unit
+		return payload[1]&0x80 != 0 && payload[1]&0x1F == NALUTypeIFrame
+	}
+	return false
+}
+
 func RTPDepay(codec *core.Codec, handler core.HandlerFunc) core.HandlerFunc {
 	depack := &codecs.H264Packet{IsAVC: true}
 
