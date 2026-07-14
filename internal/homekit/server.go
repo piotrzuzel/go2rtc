@@ -277,6 +277,13 @@ func (s *server) SetCharacteristic(conn net.Conn, aid uint8, iid uint64, value a
 		consumer.SetOffer(&offer)
 		s.consumer = consumer
 
+	default:
+		// writable characteristics (mute, operating mode, etc.) -
+		// store the value and notify subscribed controllers
+		if err := char.Set(value); err != nil {
+			log.Warn().Err(err).Msgf("[homekit] set characteristic %s", char.Type)
+		}
+
 	case camera.TypeSelectedStreamConfiguration:
 		var conf camera.SelectedStreamConfiguration
 		if err := tlv8.UnmarshalBase64(value, &conf); err != nil {
@@ -314,13 +321,24 @@ func (s *server) SetCharacteristic(conn net.Conn, aid uint8, iid uint64, value a
 				return
 			}
 
+			s.SetStreamingStatus(camera.StreamingStatusInUse)
+
 			go func() {
 				_, _ = consumer.WriteTo(nil)
 				stream.RemoveConsumer(consumer)
 
 				s.DelConn(consumer)
+				s.SetStreamingStatus(camera.StreamingStatusAvailable)
 			}()
 		}
+	}
+}
+
+// SetStreamingStatus updates the streaming status characteristic and
+// notifies subscribed controllers
+func (s *server) SetStreamingStatus(status byte) {
+	if char := s.accessory.GetCharacter(camera.TypeStreamingStatus); char != nil {
+		_ = char.Set(camera.StreamingStatus{Status: status})
 	}
 }
 

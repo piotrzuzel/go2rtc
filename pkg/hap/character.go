@@ -121,6 +121,14 @@ func (c *Character) Write(v any) (err error) {
 		case float64:
 			c.Value = v != 0
 		}
+
+	case FormatUInt8, "uint16", "uint32", "int":
+		switch v := v.(type) {
+		case float64: // number from json.Unmarshal
+			c.Value = v
+		case int:
+			c.Value = v
+		}
 	}
 	return
 }

@@ -11,12 +11,86 @@ func NewAccessory(manuf, model, name, serial, firmware string) *hap.Accessory {
 		Services: []*hap.Service{
 			hap.ServiceAccessoryInformation(manuf, model, name, serial, firmware),
 			ServiceCameraRTPStreamManagement(),
-			//hap.ServiceHAPProtocolInformation(),
+			hap.ServiceHAPProtocolInformation(),
 			ServiceMicrophone(),
+			ServiceSpeaker(),
+			ServiceCameraOperatingMode(),
+			ServiceMotionSensor(),
 		},
 	}
 	acc.InitIID()
 	return acc
+}
+
+// ServiceMotionSensor - Apple controllers keep a persistent connection
+// to accessories with subscribable sensors, which makes every stream
+// start much faster (no reconnect + pair-verify on each interaction)
+func ServiceMotionSensor() *hap.Service {
+	return &hap.Service{
+		Type: "85", // 'MotionSensor'
+		Characters: []*hap.Character{
+			{
+				Type:   "22",
+				Format: hap.FormatBool,
+				Value:  false,
+				Perms:  hap.EVPR,
+				//Descr:  "Motion Detected"
+			},
+			{
+				Type:   "75",
+				Format: hap.FormatBool,
+				Value:  true,
+				Perms:  hap.EVPR,
+				//Descr:  "Status Active"
+			},
+		},
+	}
+}
+
+// ServiceCameraOperatingMode - iOS reads and writes these on camera
+// settings, real cameras always expose them
+func ServiceCameraOperatingMode() *hap.Service {
+	return &hap.Service{
+		Type: "21A", // 'CameraOperatingMode'
+		Characters: []*hap.Character{
+			{
+				Type:   "21B",
+				Format: hap.FormatBool,
+				Value:  true,
+				Perms:  hap.EVPRPW,
+				//Descr:  "HomeKit Camera Active"
+			},
+			{
+				Type:   "223",
+				Format: hap.FormatBool,
+				Value:  true,
+				Perms:  hap.EVPRPW,
+				//Descr:  "Event Snapshots Active"
+			},
+			{
+				Type:   "225",
+				Format: hap.FormatBool,
+				Value:  true,
+				Perms:  hap.EVPRPW,
+				//Descr:  "Periodic Snapshots Active"
+			},
+		},
+	}
+}
+
+func ServiceSpeaker() *hap.Service {
+	return &hap.Service{
+		Type: "113", // 'Speaker'
+		Characters: []*hap.Character{
+			{
+				Type:   "11A",
+				Format: hap.FormatBool,
+				Value:  false,
+				Perms:  hap.EVPRPW,
+				//Descr:  "Mute"
+			},
+		},
+	}
 }
 
 func ServiceMicrophone() *hap.Service {
