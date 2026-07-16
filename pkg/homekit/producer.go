@@ -1,10 +1,13 @@
 package homekit
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand"
 	"net"
+	"net/http"
+	"sync"
 	"time"
 
 	"github.com/AlexxIT/go2rtc/pkg/core"
@@ -115,6 +118,13 @@ func (c *Client) GetMedias() []*core.Media {
 	return c.Medias
 }
 
+// Hooks for mirroring camera state into accessories served by go2rtc.
+// Wired by internal/homekit; source is the producer source URL.
+var (
+	OnSourceState  func(source string, active bool)
+	OnSourceMotion func(source string, motion bool)
+)
+
 func (c *Client) Start() error {
 	if c.Receivers == nil {
 		return errors.New("producer without tracks")
@@ -146,11 +156,29 @@ func (c *Client) Start() error {
 	c.srtp.AddSession(c.videoSession)
 	c.srtp.AddSession(c.audioSession)
 
+	// mirror camera state and motion events into served accessories
+	go c.watchEvents()
+	defer func() {
+		if OnSourceState != nil {
+			OnSourceState(c.Source, false)
+		}
+	}()
+
+	var activeOnce sync.Once
+	notifyActive := func() {
+		activeOnce.Do(func() {
+			if OnSourceState != nil {
+				OnSourceState(c.Source, true)
+			}
+		})
+	}
+
 	deadline := time.NewTimer(core.ConnDeadline)
 
 	if videoTrack != nil {
 		c.videoSession.OnReadRTP = func(packet *rtp.Packet) {
 			deadline.Reset(core.ConnDeadline)
+			notifyActive()
 			videoTrack.WriteRTP(packet)
 			c.Recv += len(packet.Payload)
 		}
@@ -164,6 +192,7 @@ func (c *Client) Start() error {
 	} else {
 		c.audioSession.OnReadRTP = func(packet *rtp.Packet) {
 			deadline.Reset(core.ConnDeadline)
+			notifyActive()
 			audioTrack.WriteRTP(packet)
 			c.Recv += len(packet.Payload)
 		}
@@ -206,6 +235,57 @@ func (c *Client) Stop() error {
 	}
 
 	return c.Connection.Stop()
+}
+
+// watchEvents subscribes to the camera motion sensor and pumps
+// unsolicited EVENT frames from the camera to the mirror hooks
+func (c *Client) watchEvents() {
+	acc, err := c.hap.GetFirstAccessory()
+	if err != nil {
+		return
+	}
+
+	var motionIID uint64
+	for _, srv := range acc.Services {
+		if srv.Type == "85" { // MotionSensor
+			if char := srv.GetCharacter("22"); char != nil { // MotionDetected
+				motionIID = char.IID
+			}
+		}
+	}
+	if motionIID == 0 {
+		return // camera without motion sensor
+	}
+
+	c.hap.OnEvent = func(res *http.Response) {
+		var v hap.JSONCharacters
+		if err := json.NewDecoder(res.Body).Decode(&v); err != nil {
+			return
+		}
+		for _, char := range v.Value {
+			if char.IID != motionIID {
+				continue
+			}
+			var motion bool
+			switch val := char.Value.(type) {
+			case bool:
+				motion = val
+			case float64:
+				motion = val != 0
+			}
+			if OnSourceMotion != nil {
+				OnSourceMotion(c.Source, motion)
+			}
+		}
+	}
+
+	if err = c.hap.SubscribeEvents(motionIID); err != nil {
+		return
+	}
+
+	// background reader delivers camera events even between sessions
+	// (lingering connection)
+	c.hap.StartEvents()
 }
 
 // RequestKeyframe - new consumers should wait less for the first frame,

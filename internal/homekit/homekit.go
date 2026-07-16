@@ -26,6 +26,7 @@ func Init() {
 			DevicePrivate string   `yaml:"device_private"`
 			CategoryID    string   `yaml:"category_id"`
 			Pairings      []string `yaml:"pairings"`
+			MotionFrom    string   `yaml:"motion_from"`
 		} `yaml:"homekit"`
 	}
 	app.LoadConfig(&cfg)
@@ -113,7 +114,35 @@ func Init() {
 		hosts[host] = srv
 		servers[id] = srv
 
+		// mirror camera state/motion from the watched stream source
+		if conf.MotionFrom != "" {
+			if watched := streams.Get(conf.MotionFrom); watched != nil {
+				if url := findHomeKitURL(watched.Sources()); url != "" {
+					watchers[url] = append(watchers[url], srv)
+				} else {
+					log.Warn().Msgf("[homekit] motion_from %s: no homekit source", conf.MotionFrom)
+				}
+			} else {
+				log.Warn().Msgf("[homekit] motion_from missing stream: %s", conf.MotionFrom)
+			}
+		}
+
 		log.Trace().Msgf("[homekit] new server: %s", srv.mdns)
+	}
+
+	if len(watchers) > 0 {
+		homekit.OnSourceMotion = func(source string, motion bool) {
+			log.Debug().Msgf("[homekit] mirror motion=%v source=%.32s", motion, source)
+			for _, srv := range watchers[source] {
+				srv.SetMotion(motion)
+			}
+		}
+		homekit.OnSourceState = func(source string, active bool) {
+			log.Debug().Msgf("[homekit] mirror active=%v source=%.32s", active, source)
+			for _, srv := range watchers[source] {
+				srv.SetActive(active)
+			}
+		}
 	}
 
 	api.HandleFunc(hap.PathPairSetup, hapHandler)
@@ -129,6 +158,7 @@ func Init() {
 var log zerolog.Logger
 var hosts map[string]*server
 var servers map[string]*server
+var watchers = map[string][]*server{}
 
 func streamHandler(rawURL string) (core.Producer, error) {
 	if srtp.Server == nil {

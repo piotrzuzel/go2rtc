@@ -342,6 +342,26 @@ func (s *server) SetStreamingStatus(status byte) {
 	}
 }
 
+// SetMotion mirrors the camera motion sensor state
+func (s *server) SetMotion(motion bool) {
+	if char := s.accessory.GetCharacter("22"); char != nil { // MotionDetected
+		_ = char.Set(motion)
+	}
+}
+
+// SetActive mirrors camera availability (ex. privacy mode),
+// so controllers show "Camera Off" instead of a stale snapshot
+func (s *server) SetActive(active bool) {
+	if char := s.accessory.GetCharacter("21B"); char != nil { // HomeKitCameraActive
+		_ = char.Set(active)
+	}
+	if active {
+		s.SetStreamingStatus(camera.StreamingStatusAvailable)
+	} else {
+		s.SetStreamingStatus(camera.StreamingStatusUnavailable)
+	}
+}
+
 func (s *server) GetImage(conn net.Conn, width, height int) []byte {
 	log.Trace().Str("stream", s.stream).Msgf("[homekit] get image width=%d height=%d", width, height)
 

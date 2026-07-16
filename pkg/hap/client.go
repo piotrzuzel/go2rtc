@@ -245,9 +245,37 @@ func (c *Client) Close() error {
 	return c.Conn.Close()
 }
 
-func (c *Client) eventsReader() {
+// StartEvents spawns the background reader, so unsolicited EVENT frames
+// from the device reach OnEvent while the connection is otherwise idle.
+// After this call all requests receive responses through the reader.
+func (c *Client) StartEvents() {
+	if c.res != nil {
+		return
+	}
 	c.res = make(chan *http.Response)
+	go c.eventsReader()
+}
 
+// SubscribeEvents asks the device to send EVENT frames
+// for the characteristics
+func (c *Client) SubscribeEvents(iids ...uint64) error {
+	var v JSONCharacters
+	for _, iid := range iids {
+		v.Value = append(v.Value, JSONCharacter{AID: DeviceAID, IID: iid, Event: true})
+	}
+	body, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	res, err := c.Put(PathCharacteristics, MimeJSON, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	_, _ = io.ReadAll(res.Body)
+	return nil
+}
+
+func (c *Client) eventsReader() {
 	for {
 		var res *http.Response
 		if res, c.err = ReadResponse(c.reader, nil); c.err != nil {
