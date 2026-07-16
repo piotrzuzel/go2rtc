@@ -167,10 +167,10 @@ func retryTimeout(retry int) time.Duration {
 		return time.Second
 	case retry < 10:
 		return time.Second * 5
-	case retry < 20:
-		return time.Second * 10
 	}
-	return time.Minute
+	// cap at 10s so sources recover quickly after downtime
+	// (ex. camera privacy mode turned off)
+	return time.Second * 10
 }
 
 func (p *Producer) worker(conn core.Producer, workerID, retry int) {
