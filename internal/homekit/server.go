@@ -353,21 +353,18 @@ func (s *server) SetMotion(motion bool) {
 	}
 }
 
-// SetActive mirrors camera availability (ex. privacy mode),
-// so controllers show "Camera Off" instead of a stale snapshot
+// SetActive mirrors camera availability (ex. privacy mode) via
+// StreamingStatus. HomeKitCameraActive (21B) is NOT touched - it is
+// the user's persistent camera on/off setting, not transient state.
 func (s *server) SetActive(active bool) {
-	if char := s.accessory.GetCharacter("21B"); char != nil { // HomeKitCameraActive
-		if v, _ := char.ReadBool(); v == active {
-			return // no change - don't spam subscribers
-		}
-		log.Debug().Str("stream", s.stream).Msgf("[homekit] set active=%v listeners=%d", active, char.Listeners())
-		_ = char.Set(active)
-	}
+	status := byte(camera.StreamingStatusUnavailable)
 	if active {
-		s.SetStreamingStatus(camera.StreamingStatusAvailable)
-	} else {
-		s.SetStreamingStatus(camera.StreamingStatusUnavailable)
+		status = camera.StreamingStatusAvailable
 	}
+	if char := s.accessory.GetCharacter(camera.TypeStreamingStatus); char != nil {
+		log.Debug().Str("stream", s.stream).Msgf("[homekit] set active=%v listeners=%d", active, char.Listeners())
+	}
+	s.SetStreamingStatus(status)
 }
 
 func (s *server) GetImage(conn net.Conn, width, height int) []byte {
