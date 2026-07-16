@@ -32,6 +32,11 @@ type Character struct {
 	listeners map[io.Writer]bool
 }
 
+// Listeners returns the number of subscribed event listeners
+func (c *Character) Listeners() int {
+	return len(c.listeners)
+}
+
 func (c *Character) AddListener(w io.Writer) {
 	// TODO: sync.Mutex
 	if c.listeners == nil {

@@ -345,6 +345,10 @@ func (s *server) SetStreamingStatus(status byte) {
 // SetMotion mirrors the camera motion sensor state
 func (s *server) SetMotion(motion bool) {
 	if char := s.accessory.GetCharacter("22"); char != nil { // MotionDetected
+		if v, _ := char.ReadBool(); v == motion {
+			return // no change - don't spam subscribers
+		}
+		log.Debug().Str("stream", s.stream).Msgf("[homekit] set motion=%v listeners=%d", motion, char.Listeners())
 		_ = char.Set(motion)
 	}
 }
@@ -353,6 +357,10 @@ func (s *server) SetMotion(motion bool) {
 // so controllers show "Camera Off" instead of a stale snapshot
 func (s *server) SetActive(active bool) {
 	if char := s.accessory.GetCharacter("21B"); char != nil { // HomeKitCameraActive
+		if v, _ := char.ReadBool(); v == active {
+			return // no change - don't spam subscribers
+		}
+		log.Debug().Str("stream", s.stream).Msgf("[homekit] set active=%v listeners=%d", active, char.Listeners())
 		_ = char.Set(active)
 	}
 	if active {

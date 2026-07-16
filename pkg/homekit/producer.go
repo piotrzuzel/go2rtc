@@ -43,6 +43,10 @@ func Dial(rawURL string, server *srtp.Server) (*Client, error) {
 	if item == nil {
 		conn, err := hap.Dial(rawURL)
 		if err != nil {
+			// camera unreachable (ex. powered off)
+			if OnSourceState != nil {
+				OnSourceState(rawURL, false)
+			}
 			return nil, err
 		}
 		item = &poolItem{client: conn}
@@ -138,6 +142,14 @@ func (c *Client) Start() error {
 		return errors.New("homekit: missing stream configuration")
 	}
 
+	// notify inactive on every exit - both a failed start (ex. camera
+	// in privacy mode) and the end of a running stream
+	defer func() {
+		if OnSourceState != nil {
+			OnSourceState(c.Source, false)
+		}
+	}()
+
 	videoTrack := c.trackByKind(core.KindVideo)
 	videoCodec := trackToVideo(videoTrack, &c.videoConfig.Codecs[0], c.MaxWidth, c.MaxHeight)
 
@@ -158,11 +170,6 @@ func (c *Client) Start() error {
 
 	// mirror camera state and motion events into served accessories
 	go c.watchEvents()
-	defer func() {
-		if OnSourceState != nil {
-			OnSourceState(c.Source, false)
-		}
-	}()
 
 	var activeOnce sync.Once
 	notifyActive := func() {
