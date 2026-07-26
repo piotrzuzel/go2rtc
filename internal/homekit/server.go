@@ -321,14 +321,15 @@ func (s *server) SetCharacteristic(conn net.Conn, aid uint8, iid uint64, value a
 				return
 			}
 
-			s.SetStreamingStatus(camera.StreamingStatusInUse)
-
+			// don't report StreamingStatus InUse - the accessory has a
+			// single stream slot, and a session left behind by a sleeping
+			// controller keeps it "in use" forever, so Apple Home refuses
+			// to open the camera on another device with "camera in use"
 			go func() {
 				_, _ = consumer.WriteTo(nil)
 				stream.RemoveConsumer(consumer)
 
 				s.DelConn(consumer)
-				s.SetStreamingStatus(camera.StreamingStatusAvailable)
 			}()
 		}
 	}
