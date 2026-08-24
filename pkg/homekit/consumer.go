@@ -144,8 +144,12 @@ func (c *Consumer) AddTrack(media *core.Media, codec *core.Codec, track *core.Re
 		c.deadline = time.NewTimer(time.Second * 30)
 
 		sender.Handler = func(packet *rtp.Packet) {
-			c.deadline.Reset(core.ConnDeadline)
+			// extend the deadline only on a successful write - a controller
+			// that went away (sleeping Mac, closed app) stops accepting
+			// packets, and the session should expire instead of streaming
+			// into the void forever
 			if n, err := session.WriteRTP(packet); err == nil {
+				c.deadline.Reset(core.ConnDeadline)
 				c.Send += n
 			}
 		}
@@ -185,7 +189,25 @@ func (c *Consumer) Stop() error {
 	if c.deadline != nil {
 		c.deadline.Reset(0)
 	}
-	return c.Connection.Stop()
+
+	// release the SRTP sessions - they were never removed, so every
+	// stream leaked an entry in the server session map
+	if c.videoSession != nil && c.videoSession.Remote != nil {
+		c.srtp.DelSession(c.videoSession)
+	}
+	if c.audioSession != nil && c.audioSession.Remote != nil {
+		c.srtp.DelSession(c.audioSession)
+	}
+
+	for _, sender := range c.Senders {
+		sender.Close()
+	}
+
+	// don't close the HAP connection - it belongs to the request handler
+	// and carries the controller's characteristic reads, writes and
+	// events. Closing it here disconnects the controller after every
+	// stream, forcing a reconnect and pair-verify for the next one.
+	return nil
 }
 
 func (c *Consumer) srtpEndpoint() *srtp.Endpoint {
