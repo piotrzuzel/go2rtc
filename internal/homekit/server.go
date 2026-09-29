@@ -44,6 +44,7 @@ type server struct {
 	stream    string // stream name from YAML
 
 	snapshotURL string // HomeKit camera to ask for snapshots (snapshot_from)
+	refused     bool   // camera refused the last stream setup (privacy mode)
 }
 
 func (s *server) MarshalJSON() ([]byte, error) {
@@ -248,6 +249,9 @@ func (s *server) GetCharacteristic(conn net.Conn, aid uint8, iid uint64) any {
 		}
 
 		answer := consumer.GetAnswer()
+		if s.refused {
+			answer.Status = camera.SetupEndpointsStatusError
+		}
 		v, err := tlv8.MarshalBase64(answer)
 		if err != nil {
 			return nil
@@ -278,6 +282,14 @@ func (s *server) SetCharacteristic(conn net.Conn, aid uint8, iid uint64, value a
 		consumer := homekit.NewConsumer(conn, srtp2.Server)
 		consumer.SetOffer(&offer)
 		s.consumer = consumer
+
+		// a camera in privacy mode refuses to stream - report the error
+		// right away, instead of accepting a stream that never gets a
+		// frame (endless spinner in Apple Home)
+		s.refused = s.snapshotURL != "" && cameraRefuses(s.snapshotURL)
+		if s.refused {
+			log.Debug().Str("stream", s.stream).Msg("[homekit] camera refused stream")
+		}
 
 	default:
 		// writable characteristics (mute, operating mode, etc.) -
