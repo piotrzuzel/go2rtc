@@ -18,3 +18,8 @@ func TestCheckJPEG(t *testing.T) {
 	_, err = checkJPEG(nil)
 	require.Error(t, err)
 }
+
+func TestSnapshotRefusedIs(t *testing.T) {
+	_, err := checkJPEG([]byte(`{"status":-70412}`))
+	require.ErrorIs(t, err, errSnapshotRefused)
+}

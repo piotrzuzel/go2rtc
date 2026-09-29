@@ -2,6 +2,13 @@ package camera
 
 const TypeSetupEndpoints = "118"
 
+// SetupEndpointsResponse status
+const (
+	SetupEndpointsStatusSuccess = 0
+	SetupEndpointsStatusBusy    = 1
+	SetupEndpointsStatusError   = 2
+)
+
 type SetupEndpointsRequest struct {
 	SessionID   string          `tlv8:"1"`
 	Address     Address         `tlv8:"3"`
