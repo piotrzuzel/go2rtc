@@ -42,6 +42,8 @@ type server struct {
 	proxyURL  string
 	setupID   string
 	stream    string // stream name from YAML
+
+	snapshotURL string // HomeKit camera to ask for snapshots (snapshot_from)
 }
 
 func (s *server) MarshalJSON() ([]byte, error) {
@@ -345,6 +347,14 @@ func (s *server) SetStreamingStatus(status byte) {
 
 func (s *server) GetImage(conn net.Conn, width, height int) []byte {
 	log.Trace().Str("stream", s.stream).Msgf("[homekit] get image width=%d height=%d", width, height)
+
+	if s.snapshotURL != "" {
+		b, err := getSnapshot(s.snapshotURL, width, height)
+		if err != nil {
+			log.Debug().Err(err).Str("stream", s.stream).Msg("[homekit] snapshot")
+		}
+		return b
+	}
 
 	stream := streams.Get(s.stream)
 	cons := magic.NewKeyframe()
