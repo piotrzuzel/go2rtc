@@ -26,6 +26,7 @@ func Init() {
 			DevicePrivate string   `yaml:"device_private"`
 			CategoryID    string   `yaml:"category_id"`
 			Pairings      []string `yaml:"pairings"`
+			SnapshotFrom  string   `yaml:"snapshot_from"`
 		} `yaml:"homekit"`
 	}
 	app.LoadConfig(&cfg)
@@ -107,6 +108,16 @@ func Init() {
 		} else {
 			// 2. Act as basic HomeKit camera
 			srv.accessory = camera.NewAccessory("AlexxIT", "go2rtc", name, "-", app.Version)
+		}
+
+		// take snapshots from a HomeKit camera stream instead of decoding
+		// a keyframe with ffmpeg (ex. accessory on an RTSP alias stream)
+		if conf.SnapshotFrom != "" {
+			if src := streams.Get(conf.SnapshotFrom); src == nil {
+				log.Warn().Msgf("[homekit] missing snapshot_from stream: %s", conf.SnapshotFrom)
+			} else if srv.snapshotURL = findHomeKitURL(src.Sources()); srv.snapshotURL == "" {
+				log.Warn().Msgf("[homekit] snapshot_from stream isn't HomeKit: %s", conf.SnapshotFrom)
+			}
 		}
 
 		host := srv.mdns.Host(mdns.ServiceHAP)
