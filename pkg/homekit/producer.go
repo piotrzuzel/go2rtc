@@ -73,7 +73,11 @@ func (c *Client) GetMedias() []*core.Media {
 		return c.Medias
 	}
 
-	acc, err := c.hap.GetFirstAccessory()
+	var acc *hap.Accessory
+	err := c.withDeadline(func() (err error) {
+		acc, err = c.hap.GetFirstAccessory()
+		return
+	})
 	if err != nil {
 		return nil
 	}
@@ -137,8 +141,10 @@ func (c *Client) Start() error {
 	c.videoSession = &srtp.Session{Local: c.srtpEndpoint()}
 	c.audioSession = &srtp.Session{Local: c.srtpEndpoint()}
 
-	var err error
-	c.stream, err = camera.NewStream(c.hap, videoCodec, audioCodec, c.videoSession, c.audioSession, c.Bitrate)
+	err := c.withDeadline(func() (err error) {
+		c.stream, err = camera.NewStream(c.hap, videoCodec, audioCodec, c.videoSession, c.audioSession, c.Bitrate)
+		return
+	})
 	if err != nil {
 		return err
 	}
@@ -188,7 +194,7 @@ func (c *Client) Stop() error {
 
 	// end camera RTP session but keep the pair-verified connection
 	// for near instant next stream start (camera sends keyframe on start)
-	if c.stream != nil && c.stream.Close() == nil {
+	if c.stream != nil && c.withDeadline(c.stream.Close) == nil {
 		poolPut(c.Source, &poolItem{
 			client:      c.hap,
 			medias:      c.Medias,
@@ -206,6 +212,23 @@ func (c *Client) Stop() error {
 	}
 
 	return c.Connection.Stop()
+}
+
+// requestTimeout bounds every HAP request to the camera. A camera may never
+// answer (ex. Tapo C225 switching to privacy mode while its stream is being
+// closed), and a request without a deadline blocks the producer forever:
+// no reconnect and no stream until go2rtc is restarted.
+var requestTimeout = 5 * time.Second
+
+func (c *Client) withDeadline(request func() error) error {
+	conn := c.hap.Conn
+	if conn == nil {
+		return request()
+	}
+	_ = conn.SetDeadline(time.Now().Add(requestTimeout))
+	err := request()
+	_ = conn.SetDeadline(time.Time{})
+	return err
 }
 
 // RequestKeyframe - new consumers should wait less for the first frame,
@@ -229,7 +252,11 @@ func (c *Client) startMJPEG() error {
 	receiver := c.Receivers[0]
 
 	for {
-		b, err := c.hap.GetImage(1920, 1080)
+		var b []byte
+		err := c.withDeadline(func() (err error) {
+			b, err = c.hap.GetImage(1920, 1080)
+			return
+		})
 		if err != nil {
 			return err
 		}

@@ -112,6 +112,12 @@ func (c *Client) Dial() (err error) {
 
 	c.reader = bufio.NewReader(c.Conn)
 
+	// pair-verify shouldn't wait forever for a device that accepts
+	// the connection but never answers
+	rawConn := c.Conn
+	_ = rawConn.SetDeadline(time.Now().Add(ConnDialTimeout + ConnDeadline))
+	defer rawConn.SetDeadline(time.Time{})
+
 	// STEP M1: send our session public to device
 	sessionPublic, sessionPrivate := curve25519.GenerateKeyPair()
 
